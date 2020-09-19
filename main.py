@@ -1,122 +1,126 @@
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
 import numpy as np
-from sklearn import datasets
-from mpl_toolkits.mplot3d import Axes3D
-from collections import Counter
+from scipy.stats import truncnorm
+from scipy.special import expit as activation_function
+
 from sklearn.datasets import make_blobs
+import matplotlib.pyplot as plt
+from collections import Counter
+
+def truncated_normal(mean=0, sd=1, low=0, upp=10):
+	return truncnorm(
+		(low - mean) / sd, (upp - mean) / sd, loc=mean, scale=sd)
+
+class NeuralNetwork:
    
-class Perceptron:
-    
-    def __init__(self, 
-                 weights,
-                 bias=1,
-                 learning_rate=0.3):
-        """
-        'weights' can be a numpy array, list or a tuple with the
-        actual values of the weights. The number of input values
-        is indirectly defined by the length of 'weights'
-        """
-        self.weights = np.array(weights)
-        self.bias = bias
-        self.learning_rate = learning_rate
-        
-    @staticmethod
-    def unit_step_function(x):
-        if  x <= 0:
-            return 0
-        else:
-            return 1
-        
-    def __call__(self, in_data):
-        in_data = np.concatenate( (in_data, [self.bias]) )
-        result = self.weights @ in_data
-        return Perceptron.unit_step_function(result)
-    
-    def adjust(self, 
-               target_result, 
-               in_data):
-        if type(in_data) != np.ndarray:
-            in_data = np.array(in_data)  # 
-        calculated_result = self(in_data)
-        error = target_result - calculated_result
-        if error != 0:
-            in_data = np.concatenate( (in_data, [self.bias]) )
-            correction = error * in_data * self.learning_rate
-            self.weights += correction
-            
-    def evaluate(self, data, labels):
-        evaluation = Counter()
-        for sample, label in zip(data, labels):
-            result = self(sample) # predict
-            if result == label:
-                evaluation["correct"] += 1
-            else:
-                evaluation["wrong"] += 1
-        return evaluation
+	def __init__(self, 
+				 no_of_in_nodes, 
+				 no_of_out_nodes, 
+				 no_of_hidden_nodes,
+				 learning_rate,
+				 bias=None):
+		self.no_of_in_nodes = no_of_in_nodes
+		self.no_of_out_nodes = no_of_out_nodes 
+		self.no_of_hidden_nodes = no_of_hidden_nodes
+		self.learning_rate = learning_rate	
+		self.bias = bias
+		self.create_weight_matrices()
+		
+	def create_weight_matrices(self):
+		bias_node = 1 if self.bias else 0
+		rad = 1 / np.sqrt(self.no_of_in_nodes)
+		X = truncated_normal(mean=0, sd=1, low=-rad, upp=rad)
+		self.weights_in_hidden = X.rvs((self.no_of_hidden_nodes, 
+									   self.no_of_in_nodes + bias_node))
+		rad = 1 / np.sqrt(self.no_of_hidden_nodes)
+		X = truncated_normal(mean=0, sd=1, low=-rad, upp=rad)
+		self.weights_hidden_out = X.rvs((self.no_of_out_nodes, 
+										self.no_of_hidden_nodes + bias_node))
+		   
+	
+	def train(self, input_vector, target_vector):
+		""" input_vector and target_vector can be tuple, list or ndarray """
 
-def labelled_samples(n):
-    for _ in range(n):
-        s = np.random.randint(0, 2, (2,))
-        yield (s, 1) if s[0] != s[1] else (s,0)
+		# make sure that the vectors have the right shap
+		input_vector = np.array(input_vector)
+		input_vector = input_vector.reshape(input_vector.size, 1)		 
+		if self.bias:
+			# adding bias node to the end of the input_vector
+			input_vector = np.concatenate( (input_vector, [[self.bias]]) )
+		target_vector = np.array(target_vector).reshape(target_vector.size, 1)
 
-p1 = Perceptron(weights=[0.3, 0.3, 0.3],
-               learning_rate=0.005)
-p2 = Perceptron(weights=[0.3, 0.3, 0.3],
-               learning_rate=0.005)
-p3 = Perceptron(weights=[0.3, 0.3, 0.3],
-               learning_rate=0.2)
+		output_vector_hidden = activation_function(self.weights_in_hidden @ input_vector)
+		if self.bias:
+			output_vector_hidden = np.concatenate( (output_vector_hidden, [[self.bias]]) ) 
+		output_vector_network = activation_function(self.weights_hidden_out @ output_vector_hidden)
+		
+		output_error = target_vector - output_vector_network  
+		# update the weights:
+		tmp = output_error * output_vector_network * (1.0 - output_vector_network)	   
+		self.weights_hidden_out += self.learning_rate  * (tmp @ output_vector_hidden.T)
 
-def evaluate_network(data, labels):
-        evaluation = Counter()
-        for sample, label in zip(data, labels):
-            output = np.array([p1(sample), p2(sample)])
-            result = p3(output) # predict
-            if result == label:
-                evaluation["correct"] += 1
-            else:
-                evaluation["wrong"] += 1
-        return evaluation
+		# calculate hidden errors:
+		hidden_errors = self.weights_hidden_out.T @ output_error
+		# update the weights:
+		tmp = hidden_errors * output_vector_hidden * (1.0 - output_vector_hidden)
+		if self.bias:
+			x = (tmp @input_vector.T)[:-1,:]	 # last row cut off,
+		else:
+			x = tmp @ input_vector.T
+		self.weights_in_hidden += self.learning_rate *	x 
+	
+	def run(self, input_vector):
+		"""
+		running the network with an input vector 'input_vector'. 
+		'input_vector' can be tuple, list or ndarray
+		"""
+		# make sure that input_vector is a column vector:
+		input_vector = np.array(input_vector)
+		input_vector = input_vector.reshape(input_vector.size, 1)
+		if self.bias:
+			# adding bias node to the end of the inpuy_vector
+			input_vector = np.concatenate( (input_vector, [[1]]) )
+		input4hidden = activation_function(self.weights_in_hidden @ input_vector)
+		if self.bias:
+			input4hidden = np.concatenate( (input4hidden, [[1]]) )
+		output_vector_network = activation_function(self.weights_hidden_out @ input4hidden)
+		return output_vector_network
+		
+	def evaluate(self, data, labels):
+		corrects, wrongs = 0, 0
+		for i in range(len(data)):
+			res = self.run(data[i])
+			res_max = res.argmax()
+			if res_max == labels[i]:
+				corrects += 1
+			else:
+				wrongs += 1
+		return corrects, wrongs
+		
 
+							   
+data, labels = make_blobs(n_samples=250, 
+							 centers=([2, 7.9], [8, 3]), 
+							 random_state=0)
 
-for in_data, label in labelled_samples(100):
-    p1.adjust(label, 
-             in_data)
-    p2.adjust(label, 
-             in_data)
-    output = np.array([p1(in_data), p2(in_data)])
-    p3.adjust(label,  
-             output)
-    
-
-test_data, test_labels = list(zip(*labelled_samples(1)))
-print(test_data, test_labels)
-
-evaluation = evaluate_network(test_data, test_labels)
-
-print(evaluation)
-
-
-
+colours = ('green', 'blue', 'red', 'magenta', 'yellow', 'cyan')
 fig, ax = plt.subplots()
-xmin, xmax = -0.2, 1.4
-X = np.arange(xmin, xmax, 0.1)
-'''ax.scatter(0, 0, color="r")
-ax.scatter(0, 1, color="r")
-ax.scatter(1, 0, color="r")
-ax.scatter(1, 1, color="g")'''
-ax.set_xlim([xmin, xmax])
-ax.set_ylim([-0.1, 1.1])
-m = -p.weights[0] / p.weights[1]
-c = -p.weights[2] / p.weights[1]
-print(m, c)
-ax.plot(X, m * X + c )
-plt.plot()
 
 
+for n_class in range(2):
+	ax.scatter(data[labels==n_class][:, 0], data[labels==n_class][:, 1], 
+			   c=colours[n_class], s=40, label=str(n_class))
+			   
+simple_network = NeuralNetwork(no_of_in_nodes=2, 
+							   no_of_out_nodes=2, 
+							   no_of_hidden_nodes=10,
+							   learning_rate=0.1,
+							   bias=1)
+	
+labels_one_hot = (np.arange(2) == labels.reshape(labels.size, 1))
+labels_one_hot = labels_one_hot.astype(np.float)
 
+for i in range(len(data)):
+	simple_network.train(data[i], labels_one_hot[i])
 
-
-
-
+	
+print(simple_network.evaluate(data, labels))
